@@ -12,15 +12,14 @@ then
 	echo "packed" > result.txt
 else
 	echo "File 'memory_detection' empty"
-	python syscalls_parser.py /home/elmanto/beahaviors.txt
-	mv res.txt $sample/
+	python syscalls_parser.py /home/elmanto/behaviors.txt
+	mv behavioral_analysis.txt $sample/
 	echo "not packed/virtual env detection" > result.txt
 fi
 mv module_detection.txt $sample/
 mv memory_detection.txt $sample/
 mv asid.txt $sample/
-mv behaviors.txt $sample/
-mv result.txt
+mv result.txt $sample/
 rm $record-rr-*
 
 

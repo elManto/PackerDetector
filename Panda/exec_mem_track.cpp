@@ -81,15 +81,10 @@ bool init_plugin(void* self)
 
 int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, target_ulong size, void *buf)
 {
-	// TODO: implement using asid instead of get_current_process()	
-	//proc = get_current_process(env);
-	//bool found = (strcmp(proc->name, proc_to_track) == 0);
-	//target_ulong current;
 	target_ulong current = panda_current_asid(env);
 	if (current == -1)
 		return 0;
 	bool found = (std::find(asid_list.begin(), asid_list.end(), current) != asid_list.end());
-	//bool found = (current == 131203072);
 	if(found) {
 		
 		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(addr);
@@ -127,22 +122,21 @@ bool translate_callback(CPUState *env, target_ulong pc)
 	if (proc == NULL)
 		return false;
 	int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
-	if (strncmp(proc->name, proc_to_track, len) == 0) //better remove???
+	if (strncmp(proc->name, proc_to_track, len) == 0) 
 	{
 		target_ulong asid = panda_current_asid(env);	
 		bool found = (std::find(asid_list.begin(), asid_list.end(), asid) != asid_list.end());
 
 		if (!found)
 			asid_list.push_back(asid);	
-		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(env->panda_guest_pc);//env->panda_guest_pc
+		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(env->panda_guest_pc);
 		if (it != addr2pc.end())
 		{
 			ms = get_libraries(env, proc);
 			if (ms == NULL) {
         			fprintf(module_log, "No mapped dynamic libraries.\n");
     			} else {
-        			//fprintf(mem_log, "Dynamic libraries list (%d libs):\n", ms->num);
-        			for (int i = 0; i < ms->num; i++) {
+        			for (int i = 1; i < ms->num; i++) {	// we start at '1' because module '0' is the one corresponding to the executable file
 					if (it->first >= ms->module[i].base && it->first <= (ms->module[i].base + ms->module[i].size)) {
 						fprintf(module_log, "writing on module area: %s\n", ms->module[i].name);
 						fprintf(module_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n\n", it->first, it->second);
@@ -151,8 +145,7 @@ bool translate_callback(CPUState *env, target_ulong pc)
 						if (!pc_contained)
 							fake_pc.push_back(it->second);
 					}
-            			//fprintf(mem_log, "\t0x" TARGET_FMT_lx "\t" TARGET_FMT_ld "\t%-24s %s\n", ms->module[i].base, ms->module[i].size, ms->module[i].name, ms->module[i].file);
-				}
+            			}
     				free_osimodules(ms);
 			}
 			bool last_check = is_write_to_module_pc(it->second);
