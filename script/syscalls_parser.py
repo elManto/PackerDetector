@@ -18,7 +18,7 @@ def main():
 			total_dict[my_key] = tmp[0]
 			print "************************"
 	print "Set up done..."
-	print total_dict
+	#print total_dict
 	parse_dict = dict()
 	log = open(log_to_parse)
 	for line in log:
@@ -27,15 +27,16 @@ def main():
 			parse_dict[l[1][:-1]] += 1
 		else:
 			parse_dict[l[1][:-1]] = 1
-	print "Results:"
-	out = open("./res.txt", "a")
+	print "Elaboration of results"
+	out = open("./behavioral_analysis.txt", "a")
 	for key in parse_dict:
-		print key
+		#print key
 		if total_dict.has_key(key):
+			# print key
 			syscall_name = total_dict[key]
 			freq = parse_dict[key]
 			out.write(syscall_name + "\t" + str(freq) + "\n")
-
+	print "Script ended correctly!"
 
 if __name__ == "__main__":
 	main()
