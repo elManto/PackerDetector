@@ -14,12 +14,15 @@
 extern "C"{
 #include "osi/osi_types.h"
 #include "osi/osi_ext.h"
+#include "../syscalls2/gen_syscalls_ext_typedefs.h"
+#include "../syscalls2/syscalls_common.h"
+#include "../syscalls2/syscalls2_info.h"
+#include "../syscalls2/syscalls2_int_fns.h"
 
 bool init_plugin(void *);
 void uninit_plugin(void *);
 
 FILE * mem_log;
-//FILE * instr_log;
 FILE * module_log;
 FILE * behaviors_log;
 }
@@ -28,6 +31,7 @@ FILE * behaviors_log;
 char proc_to_track[MAX_LEN];
 OsiProc *proc = NULL;
 OsiModules *ms = NULL;
+target_ulong pid = -1;
 
 std::list<target_ulong> fake_pc;	// it stores pc values related to writes to module area operations
 std::map <target_ulong, target_ulong> addr2pc;
@@ -36,6 +40,8 @@ std::list<target_ulong> asid_list;
 
 int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, target_ulong size, void *buf);
 bool translate_callback(CPUState *env, target_ulong pc);
+void my_all_sys_enter_t(CPUState *env, target_ulong pc, target_ulong callno);
+
 
 bool init_plugin(void* self)
 {
@@ -51,7 +57,11 @@ bool init_plugin(void* self)
 
     	pcb.insn_translate = translate_callback;
     	panda_register_callback(self, PANDA_CB_INSN_TRANSLATE, pcb);
-    
+ 
+	#ifdef TARGET_I386
+        PPP_REG_CB("syscalls2", on_all_sys_enter, my_all_sys_enter_t);
+	#endif
+   
 	panda_arg_list *args = panda_get_args("exec_mem_track");
 	const char* process_name = panda_parse_string(args, "proc_name", NULL);
 	if (process_name == NULL){
@@ -73,9 +83,18 @@ bool init_plugin(void* self)
 		return false;
 	}
 
-	//instr_log = fopen("instr_count.txt", "a");
-	//fprintf(mem_log, "Accessed address\t\tProgram counter\n");
 	return true;
+}
+
+
+void my_all_sys_enter_t(CPUState *env, target_ulong pc, target_ulong callno)
+{
+        proc = get_current_process(env);
+        if (proc == NULL)
+                return;
+        bool found = (strcmp(proc->name, proc_to_track) == 0);
+        if(found) 
+                fprintf(behaviors_log, "%s\t" TARGET_FMT_lx "\n", proc->name, callno);
 }
 
 
@@ -88,14 +107,14 @@ int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, targ
 	if(found) {
 		
 		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(addr);
-		proc = get_current_process(env);
+		/*proc = get_current_process(env);
 		if (proc == NULL)
 			return 0;
-		
-		if(it == addr2pc.end() && (strcmp(proc_to_track, proc->name) == 0))
+		*/
+		if(it == addr2pc.end() /*&& (strcmp(proc_to_track, proc->name) == 0)*/)
 			addr2pc[addr] = env->panda_guest_pc; // stores a written virtual address and current program counter's value 
 			
-		free_osiproc(proc);
+		//free_osiproc(proc);
 	}
 
 	return 0;
@@ -120,10 +139,11 @@ bool translate_callback(CPUState *env, target_ulong pc)
 	// Checks if pc matches with a virt mem address which has been written before
 	proc = get_current_process(env);
 	if (proc == NULL)
-		return false;
+		return false;	
 	int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
 	if (strncmp(proc->name, proc_to_track, len) == 0) 
 	{
+		//pid = proc->pid;
 		target_ulong asid = panda_current_asid(env);	
 		bool found = (std::find(asid_list.begin(), asid_list.end(), asid) != asid_list.end());
 
@@ -148,27 +168,13 @@ bool translate_callback(CPUState *env, target_ulong pc)
             			}
     				free_osimodules(ms);
 			}
-			bool last_check = is_write_to_module_pc(it->second);
-			if (!is_module_write && !last_check)
+			//bool last_check = is_write_to_module_pc(it->second);
+			if (!is_module_write /*&& !last_check*/)
 				packed_memory_area[it->first] = it->second;  
 				//fprintf(mem_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n\n", it->first, it->second);
 
 		}
-		unsigned char buf[2];
-		cpu_memory_rw_debug(env, pc, buf, 2, 0);
-                if (buf[0] == 0x0F && buf[1] == 0x34) {
-			#ifdef TARGET_I386
-			CPUX86State *cpu = (CPUX86State *) env->env_ptr;
-			// On Windows and Linux, the system call id is in EAX
-			fprintf(behaviors_log, "SYSCALL\t" TARGET_FMT_lx "\n",cpu->regs[R_EAX]);
-			#endif
-		}
-
-		/*if (first_instr == 0)
-			first_instr = rr_get_guest_instr_count();
-		else
-			last_instr = rr_get_guest_instr_count();*/
-
+		
 	}
 	free_osiproc(proc);
 		
@@ -187,7 +193,7 @@ void uninit_plugin(void * self)
 			fprintf(asid_log, "" TARGET_FMT_lx "\n", *it);
 	
 	for(std::map<target_ulong, target_ulong>::iterator it = packed_memory_area.begin(); it != packed_memory_area.end(); it++) {
-		if(!is_write_to_module_pc(it->second))
+		//if(!is_write_to_module_pc(it->second))
 			fprintf(mem_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n", it->first, it->second);
 	}
 	fclose(mem_log);
