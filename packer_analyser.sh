@@ -21,6 +21,7 @@ mv memory_detection.txt $sample/
 mv behaviors.txt $sample/
 mv asid.txt $sample/
 mv result.txt $sample/
-#rm $record-rr-*
-
+rm $record-rr-*
+mv $sample/ Analysed/
+mv LowEntropySamples1/$sample Analysed_sample/
 
