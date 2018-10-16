@@ -1,0 +1,4 @@
+1) Improve the performance replacing get_current_process() with panda_current_asid()
+2) Check if it is possible to hook the NtOpenFile()
+3) Improve the behaviors.txt parsing (detect the flagged behaviors)
+4) Generate a final output report
