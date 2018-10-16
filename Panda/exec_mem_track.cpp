@@ -31,17 +31,20 @@ FILE * behaviors_log;
 char proc_to_track[MAX_LEN];
 OsiProc *proc = NULL;
 OsiModules *ms = NULL;
-target_ulong pid = -1;
+target_ulong asid_to_track = 0;
 
+std::map<target_ulong, target_ulong> my_modules;
+std::list<target_ulong> page_list;
 std::list<target_ulong> fake_pc;	// it stores pc values related to writes to module area operations
 std::map <target_ulong, target_ulong> addr2pc;
 std::map <target_ulong, target_ulong> packed_memory_area;
 std::list<target_ulong> asid_list;
 
+
 int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, target_ulong size, void *buf);
 bool translate_callback(CPUState *env, target_ulong pc);
 void my_all_sys_enter_t(CPUState *env, target_ulong pc, target_ulong callno);
-
+int before_block_callback(CPUState *env, TranslationBlock *tb);
 
 bool init_plugin(void* self)
 {
@@ -58,6 +61,9 @@ bool init_plugin(void* self)
     	pcb.insn_translate = translate_callback;
     	panda_register_callback(self, PANDA_CB_INSN_TRANSLATE, pcb);
  
+	pcb.before_block_exec = before_block_callback;
+	panda_register_callback(self, PANDA_CB_BEFORE_BLOCK_EXEC, pcb);
+
 	#ifdef TARGET_I386
         PPP_REG_CB("syscalls2", on_all_sys_enter, my_all_sys_enter_t);
 	#endif
@@ -107,14 +113,8 @@ int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, targ
 	if(found) {
 		
 		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(addr);
-		/*proc = get_current_process(env);
-		if (proc == NULL)
-			return 0;
-		*/
-		if(it == addr2pc.end() /*&& (strcmp(proc_to_track, proc->name) == 0)*/)
+		if(it == addr2pc.end())
 			addr2pc[addr] = env->panda_guest_pc; // stores a written virtual address and current program counter's value 
-			
-		//free_osiproc(proc);
 	}
 
 	return 0;
@@ -143,22 +143,28 @@ bool translate_callback(CPUState *env, target_ulong pc)
 	int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
 	if (strncmp(proc->name, proc_to_track, len) == 0) 
 	{
-		//pid = proc->pid;
 		target_ulong asid = panda_current_asid(env);	
 		bool found = (std::find(asid_list.begin(), asid_list.end(), asid) != asid_list.end());
-
+		ms = get_libraries(env, proc);
+		if (ms != NULL) {
+			for (int i = 1; i < ms->num; i++) {
+				std::map<target_ulong, target_ulong>::iterator ms_it = my_modules.find(ms->module[i].base);
+				if(ms_it == my_modules.end()) {
+					my_modules[ms->module[i].base] = ms->module[i].size;
+				}		
+			}
+		}
 		if (!found)
 			asid_list.push_back(asid);	
 		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(env->panda_guest_pc);
 		if (it != addr2pc.end())
 		{
-			ms = get_libraries(env, proc);
 			if (ms == NULL) {
         			fprintf(module_log, "No mapped dynamic libraries.\n");
     			} else {
         			for (int i = 1; i < ms->num; i++) {	// we start at '1' because module '0' is the one corresponding to the executable file
 					if (it->first >= ms->module[i].base && it->first <= (ms->module[i].base + ms->module[i].size)) {
-						fprintf(module_log, "writing on module area: %s\n", ms->module[i].name);
+						fprintf(module_log, "writing on module area: %s, " TARGET_FMT_lx "\n", ms->module[i].name, ms->module[i].base);
 						fprintf(module_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n\n", it->first, it->second);
 						is_module_write = true;
 						bool pc_contained = (std::find(fake_pc.begin(), fake_pc.end(), it->second) != fake_pc.end());
@@ -183,10 +189,59 @@ bool translate_callback(CPUState *env, target_ulong pc)
 }
 
 
+bool is_page_containing_module(target_ulong page_addr) 
+{
+	for(std::map<target_ulong, target_ulong>::iterator it = my_modules.begin(); it != my_modules.end(); it++) {
+		if(page_addr >= it->first && page_addr <= it->first + it->second) 
+			return true;
+	}	
+	return false;
+}
+
+
+int before_block_callback(CPUState *env, TranslationBlock *tb) 
+{
+	if(asid_to_track == 0) {
+		proc = get_current_process(env);
+		if (proc == NULL)
+			return false;
+		int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
+		if (strncmp(proc->name, proc_to_track, len) == 0 && !panda_in_kernel(env)) {	
+			asid_to_track = proc->asid;
+			target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
+			target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
+			bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
+			
+			if (!found1) {
+				page_list.push_back(page1);
+			bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());	
+			if (!found2) 
+				page_list.push_back(page2);
+		}
+		free_osiproc(proc);
+
+	}
+	else {
+		target_ulong current = panda_current_asid(env);
+		if (current == asid_to_track && !panda_in_kernel(env)) {
+			target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
+			target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
+			bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
+			if (!found1) 
+				page_list.push_back(page1);
+			bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());
+
+			if (!found2) 
+				page_list.push_back(page2);
+
+		}
+	}
+	
+	return 0;	
+}
 
 void uninit_plugin(void * self)
 {
-	//fclose(pc_log);
 	FILE* asid_log = fopen("asid.txt", "a");
 	if(asid_log)
 		for(std::list<target_ulong>::iterator it = asid_list.begin(); it != asid_list.end(); it++)
@@ -195,15 +250,14 @@ void uninit_plugin(void * self)
 	for(std::map<target_ulong, target_ulong>::iterator it = packed_memory_area.begin(); it != packed_memory_area.end(); it++) {
 		//if(!is_write_to_module_pc(it->second))
 			fprintf(mem_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n", it->first, it->second);
+	}}
+	for(std::list<target_ulong>::iterator it = page_list.begin(); it != page_list.end(); it++) {
+		if(!is_page_containing_module(*it))
+			fprintf(module_log, "page: " TARGET_FMT_lx "\n", *it);
 	}
 	fclose(mem_log);
 	fclose(module_log);
 	fclose(behaviors_log);
-	/*if (instr_log) {
-		if (first_instr != last_instr) 
-			fprintf(instr_log, "" TARGET_FMT_lx "\n", last_instr);
-	}
-	fclose(instr_log);*/
 
 	panda_disable_memcb();
 	panda_disable_precise_pc();
