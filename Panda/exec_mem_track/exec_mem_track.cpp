@@ -10,6 +10,9 @@
 #define MAX_LEN 14
 #define SIZE 10
 #define RANGE 100
+#define ACCESS_MASK 805306368
+#define OPEN_FILE 1
+#define CREATE_FILE 0
 
 extern "C"{
 #include "osi/osi_types.h"
@@ -22,9 +25,11 @@ extern "C"{
 bool init_plugin(void *);
 void uninit_plugin(void *);
 
-FILE * mem_log;
-FILE * module_log;
-FILE * behaviors_log;
+FILE *mem_log;
+FILE *module_log;
+FILE *behaviors_log;
+FILE *page_log;
+FILE *file_operation_log;
 }
 
 
@@ -45,6 +50,10 @@ int virt_mem_after_write(CPUState *env, target_ulong pc, target_ulong addr, targ
 bool translate_callback(CPUState *env, target_ulong pc);
 void my_all_sys_enter_t(CPUState *env, target_ulong pc, target_ulong callno);
 int before_block_callback(CPUState *env, TranslationBlock *tb);
+// Hook function: NtCreateFile
+void my_NtCreateFile_enter(CPUState* env, target_ulong pc, uint32_t FileHandle, uint32_t DesiredAccess, uint32_t ObjectAttributes, uint32_t IoStatusBlock, uint32_t AllocationSize, uint32_t FileAttributes, uint32_t ShareAccess, uint32_t CreateDisposition, uint32_t CreateOptions, uint32_t EaBuffer, uint32_t EaLength);
+// Hook function: NtOpenFile
+void my_NtOpenFile_enter(CPUState* env, target_ulong pc, uint32_t FileHandle, uint32_t DesiredAccess, uint32_t ObjectAttributes, uint32_t IoStatusBlock, uint32_t ShareAccess, uint32_t OpenOptions);
 
 bool init_plugin(void* self)
 {
@@ -66,6 +75,8 @@ bool init_plugin(void* self)
 
 	#ifdef TARGET_I386
         PPP_REG_CB("syscalls2", on_all_sys_enter, my_all_sys_enter_t);
+	PPP_REG_CB("syscalls2", on_NtCreateFile_enter, my_NtCreateFile_enter);
+	PPP_REG_CB("syscalls2", on_NtOpenFile_enter, my_NtOpenFile_enter);
 	#endif
    
 	panda_arg_list *args = panda_get_args("exec_mem_track");
@@ -83,8 +94,10 @@ bool init_plugin(void* self)
 	mem_log = fopen("memory_detection.txt", "a");
 	module_log = fopen("module_detection.txt", "a");
 	behaviors_log = fopen("behaviors.txt", "a");
+	page_log = fopen("pages.txt", "a");
+	file_operation_log = fopen("file_operations.txt", "a");	
 
-	if (!mem_log || !module_log || !behaviors_log) {
+	if (!mem_log || !module_log || !behaviors_log || !page_log || !file_operation_log) {
 		printf("File not found\n");
 		return false;
 	}
@@ -95,12 +108,44 @@ bool init_plugin(void* self)
 
 void my_all_sys_enter_t(CPUState *env, target_ulong pc, target_ulong callno)
 {
-        proc = get_current_process(env);
+        /*proc = get_current_process(env);
         if (proc == NULL)
-                return;
-        bool found = (strcmp(proc->name, proc_to_track) == 0);
+                return;*/
+	target_ulong current = panda_current_asid(env);
+	bool found = (std::find(asid_list.begin(), asid_list.end(), current) != asid_list.end());
+
+        //bool found = (strcmp(proc->name, proc_to_track) == 0);
         if(found) 
-                fprintf(behaviors_log, "%s\t" TARGET_FMT_lx "\n", proc->name, callno);
+                fprintf(behaviors_log, "" TARGET_FMT_lx "\n", callno);
+}
+
+void my_check_access(target_ulong current, uint32_t DesiredAccess, int func)
+{
+	bool found = (std::find(asid_list.begin(), asid_list.end(), current) != asid_list.end());
+        if(found) {
+		uint32_t masked = DesiredAccess & ACCESS_MASK;
+		if (masked != 0) {
+			if (func == CREATE_FILE) {
+				fprintf(file_operation_log, "NtCreateFile with eXecute access was detected->DesiredAccess: %u\n", DesiredAccess);
+			}
+			if (func == OPEN_FILE) {
+				fprintf(file_operation_log, "NtoPENFile with eXecute access was detected->DesiredAccess: %u\n", DesiredAccess);
+			}
+		}
+	}
+}
+
+void my_NtOpenFile_enter(CPUState* env, target_ulong pc, uint32_t FileHandle, uint32_t DesiredAccess, uint32_t ObjectAttributes, uint32_t IoStatusBlock, uint32_t ShareAccess, uint32_t OpenOptions)
+{
+	target_ulong current = panda_current_asid(env);
+	my_check_access(current, DesiredAccess, OPEN_FILE);
+}
+
+
+void my_NtCreateFile_enter(CPUState* env, target_ulong pc, uint32_t FileHandle, uint32_t DesiredAccess, uint32_t ObjectAttributes, uint32_t IoStatusBlock, uint32_t AllocationSize, uint32_t FileAttributes, uint32_t ShareAccess, uint32_t CreateDisposition, uint32_t CreateOptions, uint32_t EaBuffer, uint32_t EaLength)
+{
+	target_ulong current = panda_current_asid(env);
+	my_check_access(current, DesiredAccess, CREATE_FILE);
 }
 
 
@@ -144,7 +189,10 @@ bool translate_callback(CPUState *env, target_ulong pc)
 	if (strncmp(proc->name, proc_to_track, len) == 0) 
 	{
 		target_ulong asid = panda_current_asid(env);	
-		bool found = (std::find(asid_list.begin(), asid_list.end(), asid) != asid_list.end());
+		if (asid != proc->asid) {
+			free_osiproc(proc);
+			return false;
+		}
 		ms = get_libraries(env, proc);
 		if (ms != NULL) {
 			for (int i = 1; i < ms->num; i++) {
@@ -154,6 +202,7 @@ bool translate_callback(CPUState *env, target_ulong pc)
 				}		
 			}
 		}
+		bool found = (std::find(asid_list.begin(), asid_list.end(), asid) != asid_list.end());
 		if (!found)
 			asid_list.push_back(asid);	
 		std::map<target_ulong, target_ulong>::iterator it = addr2pc.find(env->panda_guest_pc);
@@ -201,7 +250,7 @@ bool is_page_containing_module(target_ulong page_addr)
 
 int before_block_callback(CPUState *env, TranslationBlock *tb) 
 {
-	if(asid_to_track == 0) {
+	/*if(asid_to_track == 0) {
 		proc = get_current_process(env);
 		if (proc == NULL)
 			return false;
@@ -212,7 +261,7 @@ int before_block_callback(CPUState *env, TranslationBlock *tb)
 			target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
 			bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
 			
-			if (!found1) {
+			if (!found1) 
 				page_list.push_back(page1);
 			bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());	
 			if (!found2) 
@@ -220,22 +269,22 @@ int before_block_callback(CPUState *env, TranslationBlock *tb)
 		}
 		free_osiproc(proc);
 
-	}
-	else {
-		target_ulong current = panda_current_asid(env);
-		if (current == asid_to_track && !panda_in_kernel(env)) {
-			target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
-			target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
-			bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
-			if (!found1) 
-				page_list.push_back(page1);
-			bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());
+	}*/
+	target_ulong current = panda_current_asid(env);
+	bool found = (std::find(asid_list.begin(), asid_list.end(), current) != asid_list.end());
+	if (found && !panda_in_kernel(env)) {
+		target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
+		target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
+		bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
+		if (!found1) 
+			page_list.push_back(page1);
+		bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());
 
-			if (!found2) 
-				page_list.push_back(page2);
+		if (!found2) 
+			page_list.push_back(page2);
 
-		}
 	}
+	
 	
 	return 0;	
 }
@@ -250,14 +299,16 @@ void uninit_plugin(void * self)
 	for(std::map<target_ulong, target_ulong>::iterator it = packed_memory_area.begin(); it != packed_memory_area.end(); it++) {
 		//if(!is_write_to_module_pc(it->second))
 			fprintf(mem_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n", it->first, it->second);
-	}}
+	}
 	for(std::list<target_ulong>::iterator it = page_list.begin(); it != page_list.end(); it++) {
 		if(!is_page_containing_module(*it))
-			fprintf(module_log, "page: " TARGET_FMT_lx "\n", *it);
+			fprintf(page_log, "page: " TARGET_FMT_lx "\n", *it);
 	}
 	fclose(mem_log);
 	fclose(module_log);
 	fclose(behaviors_log);
+	fclose(page_log);
+	fclose(file_operation_log);
 
 	panda_disable_memcb();
 	panda_disable_precise_pc();

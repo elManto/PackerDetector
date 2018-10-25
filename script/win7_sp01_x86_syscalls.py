@@ -1250,3 +1250,83 @@ syscalls = [
     'NtUserHwndSetRedirectionInfo', # 0x338
     ],
 ]
+
+flagged_behaviors = [
+    'NtCompactKeys', # 0x37
+    'NtCompressKey', # 0x3a
+    'NtCreateKey', # 0x46
+    'NtCreateKeyedEvent', # 0x47
+    'NtCreateKeyTransacted', # 0x48
+    'NtDeleteKey', # 0x67
+    'NtDeleteValueKey', # 0x6a
+    'NtEnumerateKey', # 0x74
+    'NtEnumerateValueKey', # 0x77
+    'NtFlushKey', # 0x7e
+    'NtLoadKey', # 0x9c
+    'NtLoadKey2', # 0x9d
+    'NtLoadKeyEx', # 0x9e
+    'NtLockProductActivationKeys', # 0xa0
+    'NtLockRegistryKey', # 0xa1
+    'NtNotifyChangeKey', # 0xac
+    'NtNotifyChangeMultipleKeys', # 0xad
+    'NtOpenKey', # 0xb6
+    'NtOpenKeyEx', # 0xb7
+    'NtOpenKeyedEvent', # 0xb8
+    'NtOpenKeyTransacted', # 0xb9
+    'NtOpenKeyTransactedEx', # 0xba
+    'NtQueryKey', # 0xf4
+    'NtQueryMultipleValueKey', # 0xf6
+    'NtQueryOpenSubKeys', # 0xf9
+    'NtQueryOpenSubKeysEx', # 0xfa
+    'NtQueryValueKey', # 0x10a
+    'NtReleaseKeyedEvent', # 0x11b
+    'NtRenameKey', # 0x122
+    'NtReplaceKey', # 0x124
+    'NtRestoreKey', # 0x12e
+    'NtSaveKey', # 0x135
+    'NtSaveKeyEx', # 0x136
+    'NtSaveMergedKeys', # 0x137
+    'NtSetInformationKey', # 0x14b
+    'NtSetValueKey', # 0x166
+    'NtUnloadKey', # 0x17c
+    'NtUnloadKey2', # 0x17d
+    'NtUnloadKeyEx', # 0x17e
+    'NtWaitForKeyedEvent', # 0x184
+    'NtGdiDdSetColorKey', # 0x5e
+    'NtGdiSetOPMSigningKeyAndSequenceNumbers', # 0x124
+    'NtUserActivateKeyboardLayout', # 0x13a
+    'NtUserGetAsyncKeyState', # 0x192
+    'NtUserGetImeHotKey', # 0x1ac
+    'NtUserGetKeyboardLayoutList', # 0x1b0
+    'NtUserGetKeyboardLayoutName', # 0x1b1
+    'NtUserGetKeyboardState', # 0x1b2
+    'NtUserGetKeyNameText', # 0x1b3
+    'NtUserGetKeyState', # 0x1b4
+    'NtUserLoadKeyboardLayoutEx', # 0x1e3
+    'NtUserMapVirtualKeyEx', # 0x1e8
+    'NtUserRegisterHotKey', # 0x20b
+    'NtUserSetImeHotKey', # 0x225
+    'NtUserSetKeyboardState', # 0x22a
+    'NtUserUnloadKeyboardLayout', # 0x261
+    'NtUserUnregisterHotKey', # 0x265
+    'NtUserVkKeyScanEx', # 0x270
+    'NtGdiDdDDICreateKeyedMutex', # 0x319
+    'NtGdiDdDDIOpenKeyedMutex', # 0x31a
+    'NtGdiDdDDIDestroyKeyedMutex', # 0x31b
+    'NtGdiDdDDIAcquireKeyedMutex', # 0x31c
+    'NtGdiDdDDIReleaseKeyedMutex', # 0x31d
+    'NtFreezeRegistry', # 0x84
+    'NtGetMUIRegistryInfo', # 0x8a
+    'NtInitializeRegistry', # 0x95
+    'NtLockRegistryKey', # 0xa1
+    'NtThawRegistry', # 0x175
+    'NtCreateMutant', # 0x4a
+    'NtOpenMutant', # 0xbb
+    'NtQueryMutant', # 0xf7
+    'NtReleaseMutant', # 0x11c
+    'NtCreateSemaphore', # 0x55
+    'NtOpenSemaphore', # 0xc3
+    'NtQuerySemaphore', # 0x101
+    'NtReleaseSemaphore' # 0x11d
+]
+
