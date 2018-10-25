@@ -23,6 +23,7 @@ mv behaviors.txt $sample/
 mv asid.txt $sample/
 mv result.txt $sample/
 mv network_detection.txt $sample/
-#rm $record-rr-*
+mv file_operations.txt $sample/
+rm $record-rr-*
 
 
