@@ -24,6 +24,7 @@ mv asid.txt $sample/
 mv result.txt $sample/
 mv network_detection.txt $sample/
 mv file_operations.txt $sample/
+mv pages.txt $sample/
 rm $record-rr-*
 
 
