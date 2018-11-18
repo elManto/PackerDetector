@@ -1327,6 +1327,9 @@ flagged_behaviors = [
     'NtCreateSemaphore', # 0x55
     'NtOpenSemaphore', # 0xc3
     'NtQuerySemaphore', # 0x101
-    'NtReleaseSemaphore' # 0x11d
+    'NtReleaseSemaphore', # 0x11d
+    'NtDelayExecution',
+    'NtWaitForSingleObject',
+    'NtWaitForMultipleObjects'
 ]
 
