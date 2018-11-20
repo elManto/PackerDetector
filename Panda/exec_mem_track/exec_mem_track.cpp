@@ -4,6 +4,7 @@
 #include "qemu-common.h"
 #include <map>
 #include <list>
+#include <unordered_set>
 #include <stdio.h>
 #include <algorithm>
 
@@ -37,9 +38,12 @@ char proc_to_track[MAX_LEN];
 OsiProc *proc = NULL;
 OsiModules *ms = NULL;
 target_ulong asid_to_track = 0;
+int executed_instructions = 0;
+bool is_rdtsc_used = false;
 
+std::map<target_ulong, uint16_t> executed_blocks;
 std::map<target_ulong, target_ulong> my_modules;
-std::list<target_ulong> page_list;
+std::unordered_set<target_ulong> page_list;
 std::list<target_ulong> fake_pc;	// it stores pc values related to writes to module area operations
 std::map <target_ulong, target_ulong> addr2pc;
 std::map <target_ulong, target_ulong> packed_memory_area;
@@ -186,12 +190,21 @@ bool translate_callback(CPUState *env, target_ulong pc)
 	if (proc == NULL)
 		return false;	
 	int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
-	if (strncmp(proc->name, proc_to_track, len) == 0) 
+	if (strncmp(proc->name, proc_to_track, len) == 0 && !panda_in_kernel(env)) 
 	{
 		target_ulong asid = panda_current_asid(env);	
 		if (asid != proc->asid) {
 			free_osiproc(proc);
 			return false;
+		}
+		unsigned char buf[2];
+		buf[0] = 0x00;
+		buf[1] = 0x00;
+		int res = panda_virtual_memory_rw(env, pc, buf, 2, 0); 
+		if(res >= 0) {
+			if(buf[0] == 0x0F && buf[1] == 0x31) {
+				is_rdtsc_used = true;
+			}
 		}
 		ms = get_libraries(env, proc);
 		if (ms != NULL) {
@@ -238,7 +251,7 @@ bool translate_callback(CPUState *env, target_ulong pc)
 }
 
 
-bool is_page_containing_module(target_ulong page_addr) 
+bool is_addr_containing_module(target_ulong page_addr) 
 {
 	for(std::map<target_ulong, target_ulong>::iterator it = my_modules.begin(); it != my_modules.end(); it++) {
 		if(page_addr >= it->first && page_addr <= it->first + it->second) 
@@ -250,47 +263,33 @@ bool is_page_containing_module(target_ulong page_addr)
 
 int before_block_callback(CPUState *env, TranslationBlock *tb) 
 {
-	/*if(asid_to_track == 0) {
-		proc = get_current_process(env);
-		if (proc == NULL)
-			return false;
-		int len = (strlen(proc->name) < SIZE ? strlen(proc->name) : SIZE);
-		if (strncmp(proc->name, proc_to_track, len) == 0 && !panda_in_kernel(env)) {	
-			asid_to_track = proc->asid;
-			target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
-			target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
-			bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
-			
-			if (!found1) 
-				page_list.push_back(page1);
-			bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());	
-			if (!found2) 
-				page_list.push_back(page2);
-		}
-		free_osiproc(proc);
-
-	}*/
 	target_ulong current = panda_current_asid(env);
 	bool found = (std::find(asid_list.begin(), asid_list.end(), current) != asid_list.end());
 	if (found && !panda_in_kernel(env)) {
+		// Here I get the executed memory pages
 		target_ulong page1 = tb->pc & TARGET_PAGE_MASK;
 		target_ulong page2 = (tb->pc + tb->size) & TARGET_PAGE_MASK;	
-		bool found1 = (std::find(page_list.begin(), page_list.end(), page1) != page_list.end());
+		bool found1 = (page_list.find(page1) != page_list.end());
 		if (!found1) 
-			page_list.push_back(page1);
-		bool found2 = (std::find(page_list.begin(), page_list.end(), page2) != page_list.end());
+			page_list.insert(page1);
 
+		bool found2 = (page_list.find(page2) != page_list.end());
 		if (!found2) 
-			page_list.push_back(page2);
-
-	}
+			page_list.insert(page2);
 	
+		// Here I get the total size of the executed isntructions
+		std::map<target_ulong, uint16_t>::iterator it = executed_blocks.find(tb->pc);
+		if(it == executed_blocks.end())
+			executed_blocks[tb->pc] = tb->size; // stores a written virtual address and current program counter's value 
+	
+	}	
 	
 	return 0;	
 }
 
 void uninit_plugin(void * self)
 {
+	int memory_page_counter = 0;
 	FILE* asid_log = fopen("asid.txt", "a");
 	if(asid_log)
 		for(std::list<target_ulong>::iterator it = asid_list.begin(); it != asid_list.end(); it++)
@@ -300,10 +299,24 @@ void uninit_plugin(void * self)
 		//if(!is_write_to_module_pc(it->second))
 			fprintf(mem_log, TARGET_FMT_lx "\t\t" TARGET_FMT_lx "\n", it->first, it->second);
 	}
-	for(std::list<target_ulong>::iterator it = page_list.begin(); it != page_list.end(); it++) {
-		if(!is_page_containing_module(*it))
-			fprintf(page_log, "page: " TARGET_FMT_lx "\n", *it);
+	for(std::unordered_set<target_ulong>::iterator it = page_list.begin(); it != page_list.end(); it++) {
+		if(!is_addr_containing_module(*it))
+			memory_page_counter++;
+			//fprintf(page_log, "page: " TARGET_FMT_lx "\n", *it);
 	}
+	fprintf(page_log, "memory pages executed: %d\n", memory_page_counter);
+
+	for(std::map<target_ulong, uint16_t>::iterator it = executed_blocks.begin(); it != executed_blocks.end(); it++) {
+		if(!is_addr_containing_module(it->first)) {
+			//fprintf(page_log, "block: " TARGET_FMT_lx "\n", it->first);
+			executed_instructions += it->second;
+		}
+	}
+	fprintf(page_log, "executed instructions size: %d\n", executed_instructions);
+	if (is_rdtsc_used)
+		fprintf(page_log, "RDTSC: yes\n");
+	else
+		fprintf(page_log, "RDTSC: no\n");
 	fclose(mem_log);
 	fclose(module_log);
 	fclose(behaviors_log);
